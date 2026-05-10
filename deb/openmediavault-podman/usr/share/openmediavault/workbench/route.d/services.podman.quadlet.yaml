@@ -1,0 +1,8 @@
+version: "1.0"
+type: route
+data:
+  url: "/services/podman/quadlet"
+  title: _("Quadlet")
+  editing: true
+  notificationTitle: _("Applied Podman Quadlet file.")
+  component: omv-services-podman-quadlet-tabs-page

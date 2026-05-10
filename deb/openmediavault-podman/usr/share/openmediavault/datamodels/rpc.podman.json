@@ -48,6 +48,23 @@
 	}
 },{
 	"type": "rpc",
+	"id": "rpc.podman.applyquadlet",
+	"params": {
+		"type": "object",
+		"properties": {
+			"filename": {
+				"type": "string",
+				"pattern": "^[A-Za-z0-9][A-Za-z0-9_.@-]*\\.(artifact|build|container|image|kube|network|pod|volume)$",
+				"required": true
+			},
+			"unit": {
+				"type": "string",
+				"required": true
+			}
+		}
+	}
+},{
+	"type": "rpc",
 	"id": "rpc.podman.containerStats",
 	"params": {
 		"type": "object",

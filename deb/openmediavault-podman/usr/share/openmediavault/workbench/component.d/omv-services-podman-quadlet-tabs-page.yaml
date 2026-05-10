@@ -1,0 +1,106 @@
+version: "1.0"
+type: component
+data:
+  name: omv-services-podman-quadlet-tabs-page
+  type: tabsPage
+  config:
+    tabs:
+      - type: form
+        label: _("Unit")
+        config:
+          request:
+            service: Podman
+            post:
+              method: applyQuadlet
+          fields:
+            - type: textInput
+              name: filename
+              label: _("File name")
+              hint: _("The Quadlet file name, for example 'my-container.container'.")
+              value: ""
+              validators:
+                required: true
+                pattern:
+                  pattern: "^[A-Za-z0-9][A-Za-z0-9_.@-]*\\.(artifact|build|container|image|kube|network|pod|volume)$"
+                  errorData: _("The file name must be a valid Quadlet file name.")
+            - type: codeEditor
+              name: unit
+              label: _("Quadlet")
+              hint: _("The Quadlet file content.")
+              value: ""
+              lineNumbers: true
+              language: ini
+              validators:
+                required: true
+          buttons:
+            - template: submit
+              text: _("Apply")
+            - template: cancel
+              execute:
+                type: url
+                url: "/services/podman"
+      - type: form
+        label: _("Ingredients")
+        config:
+          request:
+            service: Podman
+            get:
+              method: getQuadletIngredients
+          fields:
+            - type: hint
+              hintType: tip
+              text: _("The following placeholders can be used in Quadlet files to get access to global system information and the configuration database:<br><ul><li>hostname()</li><li>domain()</li><li>fqdn()</li><li>tz()</li><li>ipaddr(name=NULL)</li><li>ipaddr6(name=NULL)</li><li>uid(name)</li><li>gid(name)</li><li>sharedfolder_path(name)</li><li>conf_get(id, uuid=NULL)</li></ul>You have to denote placeholders with double-curly braces. An overview of additional available filters can be found <a href='https://twig.symfony.com/doc/filters/index.html' target='_blank'>here</a>.")
+            - type: datatable
+              name: sharedfolders
+              label: _("Shared Folders")
+              hasSearchField: true
+              limit: 5
+              columns:
+                - name: _("Name")
+                  prop: name
+                  flexGrow: 1
+                  cellTemplateName: copyToClipboard
+                - name: _("Absolute Path")
+                  prop: absdirpath
+                  flexGrow: 1
+                  cellTemplateName: copyToClipboard
+                - name: _("Tags")
+                  prop: comment
+                  cellTemplateName: chip
+                  cellTemplateConfig:
+                    separator: ','
+                  flexGrow: 1
+                  sortable: true
+            - type: datatable
+              name: users
+              label: _("Users")
+              hasSearchField: true
+              limit: 5
+              columns:
+                - name: _("Name")
+                  prop: name
+                  flexGrow: 1
+                  cellTemplateName: copyToClipboard
+                - name: _("UID")
+                  prop: uid
+                  flexGrow: 1
+                  cellTemplateName: copyToClipboard
+            - type: datatable
+              name: groups
+              label: _("Groups")
+              hasSearchField: true
+              limit: 5
+              columns:
+                - name: _("Name")
+                  prop: name
+                  flexGrow: 1
+                  cellTemplateName: copyToClipboard
+                - name: _("GID")
+                  prop: gid
+                  flexGrow: 1
+                  cellTemplateName: copyToClipboard
+          buttons:
+            - template: cancel
+              execute:
+                type: url
+                url: "/services/podman"

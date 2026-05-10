@@ -1,0 +1,8 @@
+version: "1.0"
+type: navigation-item
+data:
+  path: "services.podman.quadlet"
+  position: 60
+  text: _("Quadlet")
+  icon: "mdi:file-code"
+  url: "/services/podman/quadlet"

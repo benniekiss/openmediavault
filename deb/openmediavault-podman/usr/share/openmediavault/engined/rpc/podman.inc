@@ -22,8 +22,11 @@
 namespace Engined\Rpc;
 
 require_once("openmediavault/functions.inc");
+require_once("Twig/autoload.php");
 
 class OMVRpcServicePodman extends \OMV\Rpc\ServiceAbstract {
+	private $quadletDir = "/etc/containers/systemd";
+
 	public function getName() {
 		return "Podman";
 	}
@@ -50,6 +53,197 @@ class OMVRpcServicePodman extends \OMV\Rpc\ServiceAbstract {
 		$this->registerMethod("podRestart");
 		$this->registerMethod("podStats");
 		$this->registerMethod("podLogs");
+		$this->registerMethod("getQuadletIngredients");
+		$this->registerMethod("applyQuadlet");
+	}
+
+	function getQuadletIngredients($params, $context) {
+		$this->validateMethodContext($context, [
+			"role" => OMV_ROLE_ADMINISTRATOR
+		]);
+		$db = \OMV\Config\Database::getInstance();
+		$sfObjects = $db->get("conf.system.sharedfolder");
+		$sfs = [];
+		foreach ($sfObjects as $sfObjectk => $sfObjectv) {
+			$meObject = $db->get("conf.system.filesystem.mountpoint",
+				  $sfObjectv->get("mntentref"));
+			$sfs[] = [
+				"name" => $sfObjectv->get("name"),
+				"absdirpath" => build_path(DIRECTORY_SEPARATOR,
+					$meObject->get("dir"), $sfObjectv->get("reldirpath")),
+				"comment" => $sfObjectv->get("comment")
+			];
+		}
+		$users = \OMV\Rpc\Rpc::call("UserMgmt", "enumerateAllUsers",
+			[ "detail" => "basic" ], $context);
+		$groups = \OMV\Rpc\Rpc::call("UserMgmt", "enumerateAllGroups",
+			[], $context);
+		return [
+			"sharedfolders" => $sfs,
+			"users" => $users,
+			"groups" => $groups
+		];
+	}
+
+	private function renderQuadlet($unit, $context) {
+		$db = \OMV\Config\Database::getInstance();
+		$functions = [
+			"hostname" => function() use($db) {
+				$obj = $db->get("conf.system.network.dns");
+				return $obj->get("hostname");
+			},
+			"domain" => function() use($db) {
+				$obj = $db->get("conf.system.network.dns");
+				return $obj->get("domainname");
+			},
+			"fqdn" => function() use($db) {
+				$obj = $db->get("conf.system.network.dns");
+				if (!$obj->isEmpty("domainname")) {
+					$result = sprintf("%s.%s", $obj->get("hostname"),
+						$obj->get("domainname"));
+				} else {
+					$result = $obj->get("hostname");
+				}
+				return $result;
+			},
+			"ipaddr" => function($deviceName = NULL) {
+				if (empty($deviceName)) {
+					$cmdArgs = [];
+					$cmdArgs[] = "-4";
+					$cmdArgs[] = "-json";
+					$cmdArgs[] = "route";
+					$cmdArgs[] = "show";
+					$cmdArgs[] = "default";
+					$cmd = new \OMV\System\Process("ip", $cmdArgs);
+					$cmd->setRedirect2to1();
+					$cmd->execute($output);
+					$output = json_decode_safe(implode("", $output), TRUE);
+					if (empty($output)) {
+						throw new \OMV\Exception("No default routes found.");
+					}
+					return $output[0]['prefsrc'];
+				}
+				$mngr = \OMV\System\Net\NetworkInterfaceBackend\Manager::getInstance();
+				$iface = $mngr->assertGetImpl($deviceName);
+				if (FALSE === ($ipAddr = $iface->getIP())) {
+					throw new \OMV\Exception(
+						"The network interface does not have an assigned ".
+						"IPv4 address (name=%s).", $deviceName);
+				}
+				return $ipAddr;
+			},
+			"ipaddr6" => function($deviceName = NULL) {
+				if (empty($deviceName)) {
+					$cmdArgs = [];
+					$cmdArgs[] = "-6";
+					$cmdArgs[] = "-json";
+					$cmdArgs[] = "route";
+					$cmdArgs[] = "show";
+					$cmdArgs[] = "default";
+					$cmd = new \OMV\System\Process("ip", $cmdArgs);
+					$cmd->setRedirect2to1();
+					$cmd->execute($output);
+					$output = json_decode_safe(implode("", $output), TRUE);
+					if (empty($output)) {
+						throw new \OMV\Exception("No default routes found.");
+					}
+					return $output[0]['prefsrc'];
+				}
+				$mngr = \OMV\System\Net\NetworkInterfaceBackend\Manager::getInstance();
+				$iface = $mngr->assertGetImpl($deviceName);
+				if (FALSE === ($ipAddr6 = $iface->getIP6())) {
+					throw new \OMV\Exception(
+						"The network interface does not have an assigned ".
+						"IPv6 address (name=%s).", $deviceName);
+				}
+				return $ipAddr6;
+			},
+			"tz" => function() use($db) {
+				$obj = $db->get("conf.system.time");
+				return $obj->get("timezone");
+			},
+			"uid" => function($name) use($context) {
+				$result = \OMV\Rpc\Rpc::call("UserMgmt", "getUser", [
+					"name" => $name
+				], $context);
+				return $result['uid'];
+			},
+			"gid" => function($name) use($context) {
+				$result = \OMV\Rpc\Rpc::call("UserMgmt", "getGroup", [
+					"name" => $name
+				], $context);
+				return $result['gid'];
+			},
+			"sharedfolder_path" => function($name) use($db) {
+				$sfObject = $db->getByFilter("conf.system.sharedfolder", [
+					"operator" => "stringEquals",
+					"arg0" => "name",
+					"arg1" => $name
+				], 1);
+				$meObject = $db->get("conf.system.filesystem.mountpoint",
+					$sfObject->get("mntentref"));
+				return build_path(DIRECTORY_SEPARATOR, $meObject->get("dir"),
+					$sfObject->get("reldirpath"));
+			},
+			"conf_get" => function($id, $uuid = NULL) use($db) {
+				return $db->getAssoc($id, $uuid);
+			}
+		];
+		$filters = [
+			"get" => function($value, $key, $default = NULL) {
+				$dict = new \OMV\Dictionary($value);
+				return $dict->get($key, $default);
+			}
+		];
+		$loader = new \Twig\Loader\ArrayLoader([
+			"unit" => $unit
+		]);
+		$twig = new \Twig\Environment($loader);
+		foreach ($functions as $name => $callback) {
+			$function = new \Twig\TwigFunction($name, $callback);
+			$twig->addFunction($function);
+		}
+		foreach ($filters as $name => $callback) {
+			$filter = new \Twig\TwigFilter($name, $callback);
+			$twig->addFilter($filter);
+		}
+		return $twig->render("unit");
+	}
+
+	function applyQuadlet($params, $context) {
+		$this->validateMethodContext($context, [
+			"role" => OMV_ROLE_ADMINISTRATOR
+		]);
+		$this->validateMethodParams($params, "rpc.podman.applyquadlet");
+		$unit = $this->renderQuadlet($params['unit'], $context);
+		if (!is_dir($this->quadletDir)) {
+			if (FALSE === mkdir($this->quadletDir, 0755, TRUE)) {
+				throw new \OMV\Exception("Failed to create the Quadlet directory.");
+			}
+		}
+		$path = build_path(DIRECTORY_SEPARATOR, $this->quadletDir,
+			$params['filename']);
+		$tmpPath = tempnam($this->quadletDir, ".omv-quadlet-");
+		if (FALSE === $tmpPath) {
+			throw new \OMV\Exception("Failed to create a temporary Quadlet file.");
+		}
+		if (FALSE === file_put_contents($tmpPath, rtrim($unit, "\r\n")."\n")) {
+			@unlink($tmpPath);
+			throw new \OMV\Exception("Failed to write the Quadlet file.");
+		}
+		if (FALSE === chmod($tmpPath, 0644)) {
+			@unlink($tmpPath);
+			throw new \OMV\Exception("Failed to set the Quadlet file permissions.");
+		}
+		if (FALSE === rename($tmpPath, $path)) {
+			@unlink($tmpPath);
+			throw new \OMV\Exception("Failed to install the Quadlet file.");
+		}
+		$cmdArgs = [];
+		$cmdArgs[] = "daemon-reload";
+		$cmd = new \OMV\System\Process("systemctl", $cmdArgs);
+		$cmd->setRedirect2to1();
+		$cmd->execute($output);
 	}
 
 	function imageList($params, $context) {
